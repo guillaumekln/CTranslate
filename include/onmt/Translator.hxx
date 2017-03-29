@@ -101,9 +101,9 @@ namespace onmt
 
   // The generator outputs a beam_size*batch_size x vocab_size matrix.
   // This function allows to easily query the output given a batch and a beam.
-  static size_t get_offset(size_t batch, size_t beam, size_t batch_size)
+  static size_t get_offset(size_t batch, size_t beam, size_t beam_size)
   {
-    return beam*batch_size + batch;
+    return batch*beam_size + beam;
   }
 
   template <typename MatFwd>
@@ -410,7 +410,10 @@ namespace onmt
     size_t rnn_size = _model.template get_option_value<size_t>("rnn_size");
     bool with_input_feeding = _model.get_option_flag("input_feed", true);
 
-    MatFwd context_dec = context.replicate(_beam_size, 1);
+    MatFwd context_dec(_beam_size * batch_size, context.cols());
+    for (size_t b = 0; b < batch_size; ++b)
+      context_dec.block(b * _beam_size, 0, _beam_size, context.cols())
+        = context.row(b).replicate(_beam_size, 1);
     context_dec.setHiddenDim(source_l);
 
     MatFwd input_feed(_beam_size * batch_size, rnn_size);
@@ -422,7 +425,9 @@ namespace onmt
     for (size_t l = 0; l < rnn_state_enc.size(); ++l)
     {
       rnn_state_dec.emplace_back(_beam_size * batch_size, rnn_size);
-      rnn_state_dec.back() = rnn_state_enc[l].replicate(_beam_size, 1);
+      for (size_t b = 0; b < batch_size; ++b)
+        rnn_state_dec.back().block(b * _beam_size, 0, _beam_size, rnn_size)
+          = rnn_state_enc[l].row(b).replicate(_beam_size, 1);
     }
 
     std::vector<std::vector<std::vector<size_t> > > next_ys; // b x n x K
@@ -501,10 +506,10 @@ namespace onmt
 
         for (size_t k = 0; k < _beam_size; ++k)
         {
-          input.back()(get_offset(idx, k, remaining_sents), 0) = next_ys[b][i-1][k];
+          input.back()(get_offset(idx, k, _beam_size), 0) = next_ys[b][i-1][k];
 
           for (size_t j = 0; j < _tgt_feat_dicts.size(); ++j)
-            input.back()(get_offset(idx, k, remaining_sents), j + 1) = next_features[b][i-1][j][k];
+            input.back()(get_offset(idx, k, _beam_size), j + 1) = next_features[b][i-1][j][k];
         }
 
       }
@@ -538,7 +543,7 @@ namespace onmt
             size_t idx = batch_idx[b];
             for (size_t k = 0; k < _beam_size; ++k)
             {
-              size_t index = get_offset(idx, k, remaining_sents);
+              size_t index = get_offset(idx, k, _beam_size);
               soft_out.row(index).head(pad_len).setZero();
               soft_out.row(index) /= soft_out.row(index).sum(); // Normalization (softmax output).
             }
@@ -576,7 +581,7 @@ namespace onmt
         int idx = batch_idx[b];
         // Penalize beam scores based on the previous step.
         for (size_t k = 0; k < _beam_size; ++k)
-          out.row(get_offset(idx, k, remaining_sents)).array() += scores[b][i-1][k];
+          out.row(get_offset(idx, k, _beam_size)).array() += scores[b][i-1][k];
 
         prev_ks[b].emplace_back(_beam_size, 0);
         next_ys[b].emplace_back(_beam_size, 0);
@@ -592,7 +597,7 @@ namespace onmt
           if (i == 1 || _beam_size == 1) // All outputs are the same on the first decoding step.
           {
             best_score_id = 0;
-            best_score = out.row(idx).maxCoeff(&best_score_id);
+            best_score = out.row(get_offset(idx, 0, _beam_size)).maxCoeff(&best_score_id);
           }
           else
           {
@@ -604,7 +609,7 @@ namespace onmt
             {
               size_t best_score_id_k = 0;
               float best_score_k = out
-                .row(get_offset(idx, k, remaining_sents))
+                .row(get_offset(idx, k, _beam_size))
                 .maxCoeff(&best_score_id_k);
               best_score_per_beam_size.push_back(best_score_k);
               best_score_id_per_beam_size.push_back(best_score_id_k);
@@ -626,7 +631,7 @@ namespace onmt
           next_ys[b][i][k] = best_score_id;
           scores[b][i][k] = best_score;
 
-          size_t from_beam_offset = get_offset(idx, from_beam, remaining_sents);
+          size_t from_beam_offset = get_offset(idx, from_beam, _beam_size);
 
           // Store the attention.
           all_attention[b][i].row(k) = attn_softmax_out.row(from_beam_offset);
@@ -644,7 +649,7 @@ namespace onmt
             for (size_t k = 0; k < _beam_size; ++k)
             {
               size_t best_feature_val = 0;
-              gen_out[1+j].row(get_offset(idx, k, remaining_sents)).maxCoeff(&best_feature_val);
+              gen_out[1+j].row(get_offset(idx, k, _beam_size)).maxCoeff(&best_feature_val);
               next_features[b][i][j].push_back(best_feature_val);
             }
           }
@@ -706,18 +711,18 @@ namespace onmt
               for (size_t l = 0; l < new_rnn_state_dec.size(); ++l)
               {
                 // Copy the states from the beam we came from.
-                new_rnn_state_dec[l].row(get_offset(new_idx, k, new_remaining_sents)) =
-                  rnn_state_dec[l].row(get_offset(batch_idx[b], prev_ks[b][i][k], remaining_sents));
+                new_rnn_state_dec[l].row(get_offset(new_idx, k, _beam_size)) =
+                  rnn_state_dec[l].row(get_offset(batch_idx[b], prev_ks[b][i][k], _beam_size));
               }
 
               if (with_input_feeding)
               {
-                new_input_feed.row(get_offset(new_idx, k, new_remaining_sents)) =
-                  input_feed.row(get_offset(batch_idx[b], k, remaining_sents));
+                new_input_feed.row(get_offset(new_idx, k, _beam_size)) =
+                  input_feed.row(get_offset(batch_idx[b], k, _beam_size));
               }
 
-              new_context.row(get_offset(new_idx, k, new_remaining_sents)) =
-                context_dec.row(get_offset(batch_idx[b], k, remaining_sents));
+              new_context.row(get_offset(new_idx, k, _beam_size)) =
+                context_dec.row(get_offset(batch_idx[b], k, _beam_size));
             }
 
             batch_idx[b] = new_idx++;

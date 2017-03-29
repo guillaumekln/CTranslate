@@ -10,11 +10,25 @@ namespace onmt
 
   // This class can be specialized to implement different loading behaviours
   // (including conversions) according to the source and/or target types.
-  template <typename FromT, typename ToT>
+  template <typename ToT, typename FromT>
   class StorageLoader
   {
   public:
-    static ToT get_matrix(th::Table* module_data, const std::string& name);
+    static const ToT* get_matrix(th::Table* module_data, const std::string& name, int& rows, int& cols)
+    {
+      th::Tensor<FromT>* tensor = th::get_field<th::Tensor<FromT>*>(module_data, name);
+
+      rows = 0;
+      cols = 0;
+
+      if (!tensor)
+        return nullptr;
+
+      rows = tensor->get_size()[0];
+      cols = tensor->get_dimension() == 1 ? 1 : tensor->get_size()[1];
+
+      return reinterpret_cast<const ToT*>(get_tensor_data(tensor));
+    }
   };
 
   // This default specialization maps the storage to a Eigen structure without

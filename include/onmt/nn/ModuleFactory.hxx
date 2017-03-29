@@ -27,6 +27,7 @@
 
 #ifdef WITH_CUDA
 #  include "onmt/nn/LinearGPU.h"
+#  include "onmt/nn/QuantizedLinearGPU.h"
 #endif
 
 namespace onmt
@@ -108,6 +109,14 @@ namespace onmt
         else
 #endif
           mod = new Linear<MatFwd, MatIn, ModelT>(data);
+      }
+      else if (name == "onmt.QuantizedLinear")
+      {
+#ifndef WITH_CUDA
+        throw std::runtime_error("Quantized models are only supported with CUDA support");
+#else
+        mod = new QuantizedLinearGPU<MatFwd, MatIn, ModelT>(data, _handle);
+#endif
       }
       else if (name == "nn.LookupTable")
         mod =  new LookupTable<MatFwd, MatEmb, ModelT>(data);

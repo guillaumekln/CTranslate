@@ -566,7 +566,6 @@ namespace onmt
         rnn_state_dec[l] = out_decoder[l];
 
       MatFwd& out = gen_out[0];
-      out.setHiddenDim(remaining_sents); // beam x remaining_sents*vocab_size
 
       size_t new_remaining_sents = remaining_sents;
 
@@ -595,36 +594,10 @@ namespace onmt
           size_t from_beam = 0;
 
           if (i == 1 || _beam_size == 1) // All outputs are the same on the first decoding step.
-          {
-            best_score_id = 0;
             best_score = out.row(get_offset(idx, 0, _beam_size)).maxCoeff(&best_score_id);
-          }
           else
           {
-            std::vector<float> best_score_per_beam_size;
-            std::vector<size_t> best_score_id_per_beam_size;
-
-            // Find the best score across all beams.
-            for (size_t k = 0; k < _beam_size; ++k)
-            {
-              size_t best_score_id_k = 0;
-              float best_score_k = out
-                .row(get_offset(idx, k, _beam_size))
-                .maxCoeff(&best_score_id_k);
-              best_score_per_beam_size.push_back(best_score_k);
-              best_score_id_per_beam_size.push_back(best_score_id_k);
-            }
-
-            // Pick the best.
-            for (size_t k = 0; k < _beam_size; ++k)
-            {
-              if (best_score_per_beam_size[k] > best_score)
-              {
-                best_score = best_score_per_beam_size[k];
-                best_score_id = best_score_id_per_beam_size[k];
-                from_beam = k;
-              }
-            }
+            best_score = out.block(idx * _beam_size, 0, _beam_size, out.cols()).maxCoeff(&from_beam, &best_score_id);
           }
 
           prev_ks[b][i][k] = from_beam;
